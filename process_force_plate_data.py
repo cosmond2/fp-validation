@@ -668,8 +668,8 @@ def apply_cop_criteria(corner_df, true_cop_by_phase_corner, tolerance_mm=3.0):
 def run_report():
     """Generate the validation report tables and plots from the configured raw-data directories."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir_1 = os.path.join(base_dir, "data", "ni_6210_daq_txt_files")
-    data_dir_2 = os.path.join(base_dir, "data", "powerlab_1630_daq_txt_files")
+    data_dir_1 = r"Z:\mkersh\Studies\77EDSTissueFunction\Raw Data\carle_force_plate_validation_dataset\ni_6210_daq_txt_files"
+    data_dir_2 = r"Z:\mkersh\Studies\77EDSTissueFunction\Raw Data\carle_force_plate_validation_dataset\powerlab_1630_daq_txt_files"
     plot_out_dir = os.path.join(base_dir, "report_output")
     os.makedirs(plot_out_dir, exist_ok=True)
 
