@@ -1,7 +1,31 @@
 """Plotting and visualization functions."""
+import re
+from pathlib import Path
+
 import plotly.graph_objects as go
 import numpy as np
 from scipy.fft import fft, fftfreq
+
+
+def _write_html_safely(fig, save_path):
+    """Write a Plotly figure to HTML, creating the directory and sanitizing the filename."""
+    if not save_path:
+        return
+
+    path = Path(save_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Avoid Windows-invalid characters in filenames.
+    safe_name = re.sub(r'[<>:"/\\|?*]+', '_', path.name)
+    if safe_name != path.name:
+        path = path.with_name(safe_name)
+
+    try:
+        fig.write_html(str(path))
+    except OSError:
+        html_str = fig.to_html(include_plotlyjs="cdn")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(html_str)
 
 
 def plot_interactive_timeseries(df, title="Time Series Data", y_label="Amplitude", save_path=None):
@@ -20,7 +44,7 @@ def plot_interactive_timeseries(df, title="Time Series Data", y_label="Amplitude
     )
     
     if save_path:
-        fig.write_html(save_path)
+        _write_html_safely(fig, save_path)
     else:
         fig.show()
 
@@ -41,7 +65,7 @@ def plot_fft(df, channel='Ch1', fs=1000.0, title=None, save_path=None):
     )
     
     if save_path:
-        fig.write_html(save_path)
+        _write_html_safely(fig, save_path)
     else:
         fig.show()
 
@@ -59,7 +83,7 @@ def plot_cop_scatter(cop_x, cop_y, title="Center of Pressure", save_path=None):
     )
     
     if save_path:
-        fig.write_html(save_path)
+        _write_html_safely(fig, save_path)
     else:
         fig.show()
 
@@ -81,7 +105,7 @@ def plot_component_comparison(metric_df, phase_a, phase_b, value_col, group_col,
     )
     
     if save_path:
-        fig.write_html(save_path)
+        _write_html_safely(fig, save_path)
     else:
         fig.show()
     

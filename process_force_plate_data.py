@@ -8,6 +8,8 @@ from scipy.fft import fft, fftfreq
 from scipy.signal import butter, sosfiltfilt
 from datetime import datetime
 
+from force_plate_validation.compute import generate_spatial_sensitivity_table
+
 #%% Calibration Matrices
 
 # Calibration matrices have been double checked
@@ -763,13 +765,33 @@ def run_report():
 
     #%% 5.1 - Table 5: Per-phase, per-channel ptp/RMS summary
     # This table is used for the unloaded noise assessment requested in the report.
-
     table_5 = (
         force_noise_df
         .groupby(["Phase", "Channel"])[["Peak-to-Peak", "RMS"]]
         .mean()
         .unstack("Channel")
     )
+
+    # Add loaded-case FFT noise metrics for the same report table.
+    loaded_case_files = [f for f in get_files_by_phase(directories, phase=3, keyword=None)
+                         if 'drift' in f['basename'].lower() or 'center' in f['basename'].lower()]
+    loaded_case_file = loaded_case_files[0] if loaded_case_files else None
+    if loaded_case_file is not None:
+        loaded_case_raw, _ = load_force_file(loaded_case_file["filepath"], loaded_case_file["phase"])
+        fft_noise_summary = summarize_loaded_fft_noise(
+            loaded_case_raw,
+            channel_columns=['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6'],
+            fs=1000.0,
+            cutoff_hz=20.0,
+        )
+        fft_noise_summary = fft_noise_summary.set_index("Channel")
+        fft_noise_summary = fft_noise_summary[[
+            "FFT line-noise share (filtered, %)",
+            "FFT high-freq share (filtered, %)",
+            "FFT noise reduction (%)",
+        ]]
+        table_5 = pd.concat([table_5, fft_noise_summary.T], axis=0)
+
     print("\n=== Table 5: Noise Summary ===\n")
     print(table_5)
 
@@ -843,19 +865,6 @@ def run_report():
     #%% Additional requested loaded-case FFT noise signature summary
     # This quantifies how much residual electrical-noise power remains in the loaded
     # case after the low-pass filter is applied.
-    loaded_case_files = [f for f in get_files_by_phase(directories, phase=3, keyword=None)
-                         if 'drift' in f['basename'].lower() or 'center' in f['basename'].lower()]
-    loaded_case_file = loaded_case_files[0] if loaded_case_files else None
-    if loaded_case_file is not None:
-        loaded_case_raw, _ = load_force_file(loaded_case_file["filepath"], loaded_case_file["phase"])
-        fft_noise_summary = summarize_loaded_fft_noise(
-            loaded_case_raw,
-            channel_columns=['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6'],
-            fs=1000.0,
-            cutoff_hz=20.0,
-        )
-        print("\n=== Loaded-case FFT noise summary ===\n")
-        print(fft_noise_summary)
 
     #%% Additional requested Fx/Fy consistency check between center and corner loading
     # This evaluates whether the orthogonal channels remain approximately unchanged
@@ -871,32 +880,6 @@ def run_report():
     print(center_corner_fx_fy)
 
     #%% Table 8: Spatial sensitivity information
-
-    def generate_spatial_sensitivity_table(corner_df, drift_df):
-        """Generate Table 8: Spatial sensitivity from drift and corner tests."""
-        rows = []
-        for phase in sorted(corner_df["Phase"].unique()):
-            phase_corners = corner_df[corner_df["Phase"] == phase]
-            phase_drift = drift_df[drift_df["Phase"] == phase]
-            
-            # Get center value from drift test (final Fz)
-            center_fz = phase_drift["Final Fz (N)"].values[0] if not phase_drift.empty else np.nan
-            
-            # Get corner values
-            corner_fz_values = phase_corners["Fz (N)"].values
-            
-            # Combine all Fz values
-            all_fz = list(corner_fz_values) + [center_fz] if not np.isnan(center_fz) else list(corner_fz_values)
-            
-            rows.append({
-                "Phase": phase,
-                "Min Fz (N)": np.min(all_fz),
-                "Max Fz (N)": np.max(all_fz),
-                "Range Fz (N)": np.ptp(all_fz)
-            })
-        
-        return pd.DataFrame(rows)
-
     table_8 = generate_spatial_sensitivity_table(corner_df, drift_df)
     print("\n=== Table 8: Spatial Sensitivity ===\n")
     print(table_8)

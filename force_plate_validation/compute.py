@@ -1,9 +1,19 @@
 """Pure computation functions for validation metrics."""
+import os
+import sys
+
 import numpy as np
 import pandas as pd
-from .config import LBF_TO_N, IN_TO_MM, FT_TO_IN
-from .calibration import convert_volt_to_mv
-from .signal_processing import butterworth_filter, compute_fft_noise_signature
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from force_plate_validation.config import LBF_TO_N, IN_TO_MM, FT_TO_IN
+from force_plate_validation.calibration import convert_volt_to_mv
+from force_plate_validation.signal_processing import (
+    butterworth_filter,
+    compute_fft_noise_signature,
+)
 
 
 def compute_channel_stats(df, columns, units="", data_source="raw"):
@@ -172,4 +182,30 @@ def compare_center_corner_fx_fy(center_force_df, corner_force_df, applied_load_l
         'Tolerance (N)': crosstalk_tol_n,
         'Approximately same': abs((corner_mean['Fy'] - center_mean['Fy']) * LBF_TO_N) <= crosstalk_tol_n,
     }]
+    return pd.DataFrame(rows)
+
+
+def generate_spatial_sensitivity_table(corner_df, drift_df):
+    """Summarize spatial sensitivity for Fx, Fy, and Fz across phases."""
+    rows = []
+    for phase in sorted(corner_df["Phase"].unique()):
+        phase_corners = corner_df[corner_df["Phase"] == phase]
+        phase_drift = drift_df[drift_df["Phase"] == phase]
+
+        row = {"Phase": phase}
+        for component in ["Fx", "Fy", "Fz"]:
+            center_value = (
+                phase_drift[f"Final {component} (N)"].values[0]
+                if not phase_drift.empty and f"Final {component} (N)" in phase_drift.columns
+                else np.nan
+            )
+            corner_values = phase_corners[f"{component} (N)"].values
+            all_values = list(corner_values) + [center_value] if not np.isnan(center_value) else list(corner_values)
+
+            row[f"Min {component} (N)"] = np.min(all_values)
+            row[f"Max {component} (N)"] = np.max(all_values)
+            row[f"Range {component} (N)"] = np.ptp(all_values)
+
+        rows.append(row)
+
     return pd.DataFrame(rows)

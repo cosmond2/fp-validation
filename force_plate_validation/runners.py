@@ -1,5 +1,8 @@
 """Test runner functions that iterate over files and call compute functions."""
 import os
+import re
+from pathlib import Path
+
 import numpy as np
 from .file_io import get_files_by_phase
 from .calibration import load_force_file, get_reader_and_matrix
@@ -18,6 +21,14 @@ def _iter_test_files(directories, keyword, exclude_keywords=None):
             if not any(k in f['basename'].lower() for k in exclude_keywords)
         ]
     return files
+
+
+def _build_output_path(out_dir, base_name, suffix):
+    """Create a safe HTML output path for a generated plot."""
+    safe_base = re.sub(r'[<>:"/\\|?*]+', '_', base_name)
+    output_path = Path(out_dir) / f"{safe_base}_{suffix}.html"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return str(output_path)
 
 
 def run_static_noise_test(directories, out_dir=None):
@@ -40,11 +51,11 @@ def run_static_noise_test(directories, out_dir=None):
             base = os.path.splitext(f["basename"])[0]
             plot_interactive_timeseries(
                 raw_df, title=f"Raw signal: {base}", y_label="Voltage (V)",
-                save_path=os.path.join(out_dir, f"{base}_raw_timeseries.html")
+                save_path=_build_output_path(out_dir, base, "raw_timeseries")
             )
             plot_fft(
                 raw_df, channel='Ch1', title=f"FFT (Ch1): {base}",
-                save_path=os.path.join(out_dir, f"{base}_fft.html")
+                save_path=_build_output_path(out_dir, base, "fft")
             )
     
     return (
@@ -71,7 +82,7 @@ def run_drift_test(directories, out_dir=None, n_samples=1000):
             base = os.path.splitext(f["basename"])[0]
             plot_interactive_timeseries(
                 force_df, title=f"Drift: {base}", y_label="Force (lbf) / Moment",
-                save_path=os.path.join(out_dir, f"{base}_drift.html")
+                save_path=_build_output_path(out_dir, base, "drift")
             )
     
     return pd.concat(results, ignore_index=True)
@@ -112,7 +123,7 @@ def run_corner_test(directories, z_offset_in=0.0, out_dir=None):
             base = os.path.splitext(f["basename"])[0]
             plot_interactive_timeseries(
                 force_df, title=f"Corner: {base}", y_label="Force (lbf) / Moment",
-                save_path=os.path.join(out_dir, f"{base}_corner.html")
+                save_path=_build_output_path(out_dir, base, "corner")
             )
     
     return pd.concat(results, ignore_index=True)
