@@ -7,7 +7,11 @@ import pandas as pd
 def determine_phase(filename):
     """Determine validation phase from filename."""
     filename = filename.lower()
-    if "phase4" in filename:
+    if "phase6" in filename:
+        return 6
+    elif "phase5" in filename:
+        return 5
+    elif "phase4" in filename:
         return 4
     elif "phase3" in filename:
         return 3
@@ -16,7 +20,7 @@ def determine_phase(filename):
     elif "phase1" in filename:
         return 1
     raise NameError(
-        f"File:{filename} does not contain valid phase1/2/3/4 for identification."
+        f"File:{filename} does not contain valid phase1-6 for identification."
     )
 
 
