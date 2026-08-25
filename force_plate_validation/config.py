@@ -30,9 +30,10 @@ LBF_TO_N = 4.44822
 IN_TO_MM = 25.4
 FT_TO_IN = 12.0
 
-# Force plate dimensions
+# Plastic weight plate base diameter
 BASE_PLATE_DIA = 127  # mm
 
+# Force plate dimensions
 DIMS_BP400600 = {
     'height': 600,
     'width': 400
@@ -48,9 +49,12 @@ PHASE_LABELS = {
     2: "Phase 2: BP400600 / MSA6 SN7526 / PowerLab (amplifier isolation)",
     3: "Phase 3: BP400600 / MSA6 SN7526 / NI-6210 (DAQ isolation)",
     4: "Phase 4: OR6-7-8000 / MSA6 SN7526 / PowerLab (force plate isolation)",
+    5: "Phase 5: BP400600 warm-up drift test",
+    6: "Phase 6: OR6-7-8000 warm-up drift test",
 }
 
 APPLIED_LOAD_LBS = 50.0
 DRIFT_RECORDING_SECONDS = 300.0
+WARMUP_RECORDING_SECONDS = 3600.0
 DEFAULT_FS = 1000.0
 DEFAULT_CUTOFF_HZ = 20.0
