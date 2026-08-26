@@ -1,6 +1,30 @@
 """Configuration constants, calibration matrices, and dimensions."""
 import numpy as np
 
+
+Z_OFFSET_IN_BY_PLATE = {
+    'BP400600': -37.645e-3 * M_TO_IN,
+    'OR6-7-8000': 0.0,  # PLACEHOLDER — not yet confirmed from OR6-7-8000 manual, see get_z_offset_in()
+}
+
+
+PHASE_TO_PLATE = {
+    1: 'BP400600', 2: 'BP400600', 3: 'BP400600',
+    4: 'OR6-7-8000',
+    5: 'OR6-7-8000',  
+    6: 'BP400600',
+}
+
+def get_z_offset_in(phase):
+    plate = PHASE_TO_PLATE.get(phase)
+    if plate is None:
+        raise ValueError(f"Unknown phase {phase}; cannot map to a plate for z-offset lookup.")
+    offset = Z_OFFSET_IN_BY_PLATE[plate]
+    if plate == 'OR6-7-8000':
+        print(f"WARNING: using placeholder z-offset (0.0 in) for {plate} — "
+              f"confirm true value from manual before trusting CoP results.")
+    return offset
+
 # Calibration matrices
 phase_1_2_3_gain_scaling = np.array([1, 1, 1, 1, 1, 1])
 phase_1_2_3_matrix = np.array([
