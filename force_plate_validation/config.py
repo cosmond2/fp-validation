@@ -50,6 +50,9 @@ phase_4_matrix = np.array([
 
 MATRIX_PHASE_1_2_3 = phase_1_2_3_matrix * phase_1_2_3_gain_scaling
 MATRIX_PHASE_4 = phase_4_matrix * phase_4_gain_scaling
+MATRIX_PHASE_5 = phase_4_matrix * phase_4_gain_scaling  # Phase 5 warm-up: OR6-7-8000
+MATRIX_PHASE_6 = phase_1_2_3_matrix * phase_1_2_3_gain_scaling  # Phase 6 warm-up: BP400600
+
 
 # Unit conversions
 LBF_TO_N = 4.44822

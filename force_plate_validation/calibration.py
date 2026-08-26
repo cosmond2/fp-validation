@@ -1,7 +1,7 @@
 """Calibration matrix application and force conversion functions."""
 import numpy as np
 import pandas as pd
-from .config import MATRIX_PHASE_1_2_3, MATRIX_PHASE_4
+from .config import MATRIX_PHASE_1_2_3, MATRIX_PHASE_4, MATRIX_PHASE_5, MATRIX_PHASE_6
 from .file_io import read_ni_daq, read_powerlab_daq
 
 
@@ -12,9 +12,9 @@ def get_reader_and_matrix(phase):
     elif phase == 3:
         return read_ni_daq, MATRIX_PHASE_1_2_3, 'lbf-in'
     elif phase == 5:
-        return read_powerlab_daq, MATRIX_PHASE_1_2_3, 'lbf-ft'       # Phase 5 warm-up: OR6-7-8000
+        return read_powerlab_daq, MATRIX_PHASE_5, 'lbf-ft'       # Phase 5 warm-up: OR6-7-8000
     elif phase == 6:
-        return read_powerlab_daq, MATRIX_PHASE_4, 'lbf-in'   # Phase 6 warm-up: BP400600 
+        return read_powerlab_daq, MATRIX_PHASE_6, 'lbf-in'   # Phase 6 warm-up: BP400600 
     else:
         return read_powerlab_daq, MATRIX_PHASE_1_2_3, 'lbf-in'
 
