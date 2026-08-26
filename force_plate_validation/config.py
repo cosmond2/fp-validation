@@ -2,6 +2,8 @@
 import numpy as np
 
 
+M_TO_IN = 39.3701
+
 Z_OFFSET_IN_BY_PLATE = {
     'BP400600': -37.645e-3 * M_TO_IN,
     'OR6-7-8000': 0.0,  # PLACEHOLDER — not yet confirmed from OR6-7-8000 manual, see get_z_offset_in()
