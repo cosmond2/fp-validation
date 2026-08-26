@@ -31,51 +31,11 @@ def trim_seconds(df, seconds, time_col='Time'):
     return trimmed
 
 
-#%% 5.1 Unloaded static noise testing
-'''
-Load all files containing the "static" keyword, summarize per-channel statistics for the raw
-and filtered channel signals, and report peak-to-peak force/moment values in a table.
-'''
+#%% 5.1a Static voltage: per-phase mean (SD), trimmed — separate raw and filtered tables
 
 static_files = get_files_by_phase(directories, phase='all', keyword='static')
 raw_channel_cols = ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6']
 force_channel_cols = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']
-
-# voltage_stats_frames = []
-# force_ptp_frames = []
-
-# for file_info in static_files:
-#     raw_df, force_df = load_force_file(file_info['filepath'], file_info['phase'])
-
-#     mv_df = convert_volt_to_mv(raw_df)
-#     filtered_mv_df = butterworth_filter(mv_df[raw_channel_cols], fs=FS, cutoff_hz=20)
-
-#     raw_stats = compute_channel_stats(mv_df, raw_channel_cols, units='mV', data_source='raw')
-#     filtered_stats = compute_channel_stats(filtered_mv_df, raw_channel_cols, units='mV', data_source='filtered')
-#     stats = pd.concat([raw_stats, filtered_stats], ignore_index=True)
-#     stats.insert(0, 'Phase', file_info['phase'])
-#     stats.insert(0, 'File', file_info['basename'])
-#     voltage_stats_frames.append(stats)
-
-#     filtered_force_df = butterworth_filter(force_df[force_channel_cols], fs=1000, cutoff_hz=BUTTERWORTH_CUTOFF)
-#     moment_units = force_df.attrs.get('moment_units', 'lbf-in')
-#     force_stats = compute_channel_stats(filtered_force_df, force_channel_cols,
-#                                          units=f"lbf / {moment_units}", data_source='filtered')
-#     force_stats.insert(0, 'Phase', file_info['phase'])
-#     force_stats.insert(0, 'File', file_info['basename'])
-#     force_ptp_frames.append(force_stats)
-
-# voltage_stats_df = pd.concat(voltage_stats_frames, ignore_index=True).sort_values(
-#     ['Phase', 'File', 'Data Source', 'Channel']).reset_index(drop=True)
-# force_ptp_df = pd.concat(force_ptp_frames, ignore_index=True).sort_values(
-#     ['Phase', 'File', 'Channel']).reset_index(drop=True)
-
-# voltage_table = voltage_stats_df[['File','Phase','Channel','Data Source','Mean','Std Dev','RMS']].round(1)
-# force_ptp_table = force_ptp_df[['File','Phase','Channel','Peak-to-Peak','Units']].round(1)
-
-# voltage_table
-
-#%% 5.1a Static voltage: per-phase mean (SD), trimmed — separate raw and filtered tables
 
 CHANNEL_TO_AXIS = {
     'Ch1': 'Fx', 'Ch2': 'Fy', 'Ch3': 'Fz',
@@ -113,7 +73,7 @@ for phase in sorted(set(f['phase'] for f in static_files)):
 raw_mean_sd_table = pd.DataFrame(raw_rows)
 filtered_mean_sd_table = pd.DataFrame(filt_rows)
 
-print(f'\nRaw static voltage — mean (SD) [mV] by phase (trimmed {STATIC_TRIM_SECONDS}s each end):')
+print(f'\nComplete. Raw static voltage — mean (SD) [mV] by phase (trimmed {STATIC_TRIM_SECONDS}s each end can now be copied to clipboard. \n Here is the raw table as an example:):')
 raw_mean_sd_table
 
 # raw_mean_sd_table.to_clipboard(index=False)
@@ -167,7 +127,7 @@ COLUMN_DISPLAY_NAMES = {
 raw_ptp_table = compute_ptp_by_phase(_raw_force_signal, force_channel_cols).round(2).rename(columns=COLUMN_DISPLAY_NAMES)
 filtered_ptp_table = compute_ptp_by_phase(_filtered_force_signal, force_channel_cols).round(2).rename(columns=COLUMN_DISPLAY_NAMES)
 
-print(f'\nRaw force/moment peak-to-peak (trimmed {STATIC_TRIM_SECONDS}s each end) by phase:')
+print(f'\nComplete. Force/moment peak-to-peak (trimmed {STATIC_TRIM_SECONDS}s each end) by phase can now be copied to clipboard. \n Here is the raw table as an example:')
 raw_ptp_table
 
 #%% 5.1c Representative noise histogram: Ch3 (Fz) raw voltage, Phase 1 static trial 1
@@ -313,7 +273,7 @@ for file_info in drift_files:
         'CoPy range filtered [in]': np.ptp(cop_y_filt),
     })
 
-drift_summary_table = pd.DataFrame(drift_rows).sort_values(['Phase']).round(1).reset_index(drop=True)
+drift_summary_table = pd.DataFrame(drift_rows).sort_values(['Phase']).round(2).reset_index(drop=True)
 drift_summary_table
 
 #%% 5.2 (diagnostic) Phase 3: filtered PTP noise, static (unloaded) vs. center drift trial — per channel
@@ -460,10 +420,10 @@ for plate, data in warmup_data.items():
     phase = data['phase']
     moment_units = force_df.attrs.get('moment_units', 'lbf-in')
 
-    force_trimmed = trim_seconds(force_df, seconds=TRIM_SECONDS)
+    force_trimmed = trim_seconds(force_df, seconds=WARMUP_TRIM_SECONDS)
     filtered_full = butterworth_filter(force_df[force_channel_cols], fs=1000, cutoff_hz=20)
     filtered_full['Time'] = force_df['Time'].values
-    filtered_trimmed = trim_seconds(filtered_full, seconds=TRIM_SECONDS)
+    filtered_trimmed = trim_seconds(filtered_full, seconds=WARMUP_TRIM_SECONDS)
 
     fz_raw_initial = force_trimmed['Fz'].values[:FS].mean()
     fz_raw_final = force_trimmed['Fz'].values[-FS:].mean()
@@ -474,10 +434,7 @@ for plate, data in warmup_data.items():
     cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_trimmed, moment_units, phase)
 
     warmup_rows.append({
-        'File': data['basename'],
-        'Plate': plate,
-        'Fz raw initial [lbf]': fz_raw_initial,
-        'Fz raw final [lbf]': fz_raw_final,
+        'Phase': phase,
         'Fz filtered initial [lbf]': fz_filt_initial,
         'Fz filtered final [lbf]': fz_filt_final,
         'Fz filtered drift [lbf]': fz_filt_final - fz_filt_initial,
@@ -485,7 +442,7 @@ for plate, data in warmup_data.items():
         'CoPy range filtered [in]': np.ptp(cop_y_filt),
     })
 
-warmup_summary_table = pd.DataFrame(warmup_rows).round(4)
+warmup_summary_table = pd.DataFrame(warmup_rows).round(2)
 warmup_summary_table
 
 
