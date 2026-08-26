@@ -2,6 +2,8 @@
 import os
 import glob
 import pandas as pd
+import polars as pl
+import io
 
 
 def determine_phase(filename):
@@ -65,11 +67,13 @@ def read_ni_daq(file_path):
 
 def read_powerlab_daq(file_path):
     """Read PowerLab DAQ tab-delimited file."""
-    df = pd.read_csv(
-        file_path,
-        sep='\t',
-        skiprows=6,
-        header=None,
-        names=['Time', 'Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6']
-    )
+    with open(file_path, 'r') as f:
+        lines = f.readlines()[6:]  # strip the 6 metadata header lines ourselves
+    buffer = io.BytesIO(''.join(lines).encode('utf-8'))
+    df = pl.read_csv(
+        buffer,
+        separator='\t',
+        has_header=False,
+        new_columns=['Time', 'Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6'],
+    ).to_pandas()
     return df
