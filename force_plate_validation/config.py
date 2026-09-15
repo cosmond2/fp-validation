@@ -15,6 +15,8 @@ PHASE_TO_PLATE = {
     4: 'OR6-7-8000',
     5: 'OR6-7-8000',  
     6: 'BP400600',
+    7: 'OR6-7-8000',
+    8: 'BP400600'
 }
 
 def get_z_offset_in(phase):
