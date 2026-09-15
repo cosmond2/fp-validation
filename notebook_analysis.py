@@ -18,6 +18,14 @@ WARMUP_TRIM_SECONDS = 15    # warmup trials are 1 hour long
 
 BUTTERWORTH_CUTOFF = 20 # filter cutoff frequency, Hz
 
+raw_channel_cols = ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6']
+force_channel_cols = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']
+
+CHANNEL_TO_AXIS = {
+    'Ch1': 'Fx', 'Ch2': 'Fy', 'Ch3': 'Fz',
+    'Ch4': 'Mx', 'Ch5': 'My', 'Ch6': 'Mz'
+}
+
 #%% Shared trial trimming helper — fixed seconds off each end, not a percentage of trial length
 
 def trim_seconds(df, seconds, time_col='Time'):
@@ -34,13 +42,7 @@ def trim_seconds(df, seconds, time_col='Time'):
 #%% 5.1a Static voltage: per-phase mean (SD), trimmed — separate raw and filtered tables
 
 static_files = get_files_by_phase(directories, phase='all', keyword='static')
-raw_channel_cols = ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5', 'Ch6']
-force_channel_cols = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']
 
-CHANNEL_TO_AXIS = {
-    'Ch1': 'Fx', 'Ch2': 'Fy', 'Ch3': 'Fz',
-    'Ch4': 'Mx', 'Ch5': 'My', 'Ch6': 'Mz'
-}
 
 def format_mean_sd(mean, sd, decimals=1):
     return f"{mean:.{decimals}f} ({sd:.{decimals}f})"
@@ -220,7 +222,7 @@ print(f"Found {len(drift_files)} drift/center files")
 
 
 def compute_cop_timeseries(force_df, moment_units, phase):
-    """Vectorized per-sample CoP (mm) for a full force_df, using the plate's z-offset."""
+    """Vectorized per-sample CoP (in) for a full force_df, using the plate's z-offset."""
     try:
         z_offset_in = get_z_offset_in(phase)
     except NotImplementedError as e:
@@ -243,7 +245,7 @@ def compute_cop_timeseries(force_df, moment_units, phase):
 
     cop_x_in = (-my_in + (fx * z_offset_in)) / fz
     cop_y_in = (mx_in + (fy * z_offset_in)) / fz
-    return cop_x_in * IN_TO_MM, cop_y_in * IN_TO_MM
+    return cop_x_in , cop_y_in
 
 
 drift_rows = []
@@ -319,12 +321,15 @@ ground_check_table
 corner_files = get_files_by_phase(directories, phase='all', keyword=None)
 corner_files = [
     f for f in corner_files
-    if any(k in f['basename'].lower() for k in ['corner', '_tl', '_tr', '_br', '_bl'])
+    if f['phase'] in (1, 2, 3, 4)  # corner-loading trials only exist for phases 1-4
+    and any(k in f['basename'].lower() for k in ['corner', '_tl', '_tr', '_br', '_bl'])
     and 'static' not in f['basename'].lower()
     and 'drift' not in f['basename'].lower()
 ]
 
 print(f"Found {len(corner_files)} corner files")
+for f in corner_files:
+    print(f"  Phase {f['phase']}: {f['basename']}")
 
 CORNER_LABELS = {'_tl': 'TL', '_tr': 'TR', '_br': 'BR', '_bl': 'BL'}
 CORNER_ORDER = ['TL', 'TR', 'BR', 'BL']
@@ -340,25 +345,14 @@ def mean_corner_metrics(force_df, moment_units, phase):
     fx = force_df['Fx'].mean()
     fy = force_df['Fy'].mean()
     fz = force_df['Fz'].mean()
-    mx = force_df['Mx'].mean()
-    my = force_df['My'].mean()
 
-    try:
-        z_offset_in = get_z_offset_in(phase)
-    except NotImplementedError as e:
-        print(f"WARNING: {e} — returning NaN CoP for this file.")
-        return {'Fx [lbf]': fx, 'Fy [lbf]': fy, 'Fz [lbf]': fz, 'CoPx [in]': np.nan, 'CoPy [in]': np.nan}
+    cop_x_series, cop_y_series = compute_cop_timeseries(force_df, moment_units, phase)
 
-    if moment_units == 'lbf-ft':
-        mx_in = mx * FT_TO_IN
-        my_in = my * FT_TO_IN
-    else:
-        mx_in = mx
-        my_in = my
-
-    cop_x_in = (-my_in + (fx * z_offset_in)) / fz
-    cop_y_in = (mx_in + (fy * z_offset_in)) / fz
-    return {'Fx [lbf]': fx, 'Fy [lbf]': fy, 'Fz [lbf]': fz, 'CoPx [in]': cop_x_in, 'CoPy [in]': cop_y_in}
+    return {
+        'Fx [lbf]': fx, 'Fy [lbf]': fy, 'Fz [lbf]': fz,
+        'CoPx [in]': np.nanmean(cop_x_series),
+        'CoPy [in]': np.nanmean(cop_y_series),
+    }
 
 raw_rows, filt_rows = [], []
 for file_info in corner_files:
@@ -366,7 +360,7 @@ for file_info in corner_files:
     moment_units = force_df.attrs.get('moment_units', 'lbf-in')
     corner = identify_corner(file_info['basename'])
 
-    filtered_df = butterworth_filter(force_df[force_channel_cols], fs=1000, cutoff_hz=20)
+    filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
     filtered_df['Time'] = force_df['Time'].values
     filtered_df.attrs['moment_units'] = moment_units
 
@@ -397,17 +391,17 @@ corner_raw_table
 
 #%% 5.4 Phase 5/6 Warm-up test: 
 
-#warmup_files_5 = get_files_by_phase(directories, phase=5, keyword=None)
+warmup_files_5 = get_files_by_phase(directories, phase=5, keyword=None)
 warmup_files_6 = get_files_by_phase(directories, phase=6, keyword=None)
 
-#print(f"Found {len(warmup_files_5)} Phase 5 (OR6-7-8000) warm-up file(s)")
+print(f"Found {len(warmup_files_5)} Phase 5 (OR6-7-8000) warm-up file(s)")
 print(f"Found {len(warmup_files_6)} Phase 6 (BP400600) warm-up file(s)")
 
 warmup_data = {}
 
-#for f in warmup_files_5:
-#    raw_df, force_df = load_force_file(f['filepath'], f['phase'])
-#    warmup_data['OR6-7-8000'] = {'raw_df': raw_df, 'force_df': force_df, 'basename': f['basename'], 'phase': f['phase']}
+for f in warmup_files_5:
+    raw_df, force_df = load_force_file(f['filepath'], f['phase'])
+    warmup_data['OR6-7-8000'] = {'raw_df': raw_df, 'force_df': force_df, 'basename': f['basename'], 'phase': f['phase']}
 
 for f in warmup_files_6:
     raw_df, force_df = load_force_file(f['filepath'], f['phase'])
@@ -421,7 +415,7 @@ for plate, data in warmup_data.items():
     moment_units = force_df.attrs.get('moment_units', 'lbf-in')
 
     force_trimmed = trim_seconds(force_df, seconds=WARMUP_TRIM_SECONDS)
-    filtered_full = butterworth_filter(force_df[force_channel_cols], fs=1000, cutoff_hz=20)
+    filtered_full = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
     filtered_full['Time'] = force_df['Time'].values
     filtered_trimmed = trim_seconds(filtered_full, seconds=WARMUP_TRIM_SECONDS)
 
@@ -451,7 +445,7 @@ warmup_summary_table
 fig = go.Figure()
 for plate, data in warmup_data.items():
     force_df = data['force_df']
-    filtered_fz = butterworth_filter(force_df['Fz'].values, fs=1000, cutoff_hz=20)
+    filtered_fz = butterworth_filter(force_df['Fz'].values, fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
     elapsed_min = (force_df['Time'].values - force_df['Time'].values[0]) / 60.0
     fig.add_trace(go.Scatter(x=elapsed_min, y=filtered_fz, mode='lines', name=f"{plate} (filtered)"))
 
@@ -465,6 +459,354 @@ fig.update_layout(
     height=500
 )
 fig.show()
+
+#%% Phase 7: discover perimeter/diagonal traverse files
+
+phase7_files = get_files_by_phase(directories, phase=7, keyword=None)
+for f in phase7_files:
+    name_lower = f['basename'].lower()
+    f['path_type'] = 'perimeter' if 'perimeter' in name_lower else ('diagonal' if 'diagonal' in name_lower else 'unknown')
+
+print(f"Found {len(phase7_files)} phase 7 file(s)")
+for f in phase7_files:
+    print(f"  {f['basename']} -> {f['path_type']}")
+
+#%% Stationary-segment detector v2: velocity-based, robust to slow ramps
+
+def detect_static_segments(time, cop_x, cop_y,
+                            velocity_smooth_sec=0.3, velocity_threshold_in_s=0.01,
+                            min_duration_sec=2.0, trim_sec=1.0):
+    # Identify index ranges where the CoP is stationary, based on position VELOCITY
+    # (not local std) — robust to slow/gradual transitions between dwell points.
+    # velocity_smooth_sec     : smoothing window applied to the velocity signal
+    # velocity_threshold_in_s : below this smoothed speed (in/s), treated as stationary
+    # min_duration_sec        : minimum dwell length to count as a real static hold
+    # trim_sec                : seconds trimmed off each end of a detected segment
+
+    dt = np.gradient(time)
+    dx = np.gradient(cop_x)
+    dy = np.gradient(cop_y)
+    velocity = np.sqrt((dx / dt) ** 2 + (dy / dt) ** 2)
+
+    fs_est = 1.0 / np.median(dt)
+    window = max(int(velocity_smooth_sec * fs_est), 1)
+    velocity_smooth = pd.Series(velocity).rolling(window, center=True, min_periods=1).mean().values
+
+    stationary_mask = velocity_smooth < velocity_threshold_in_s
+
+    n = len(time)
+    segments = []
+    in_seg, start = False, None
+    for i, val in enumerate(stationary_mask):
+        if val and not in_seg:
+            start, in_seg = i, True
+        elif not val and in_seg:
+            end, in_seg = i, False
+            if time[end - 1] - time[start] >= min_duration_sec:
+                segments.append((start, end))
+    if in_seg:
+        end = n
+        if time[end - 1] - time[start] >= min_duration_sec:
+            segments.append((start, end))
+
+    trim_n = int(trim_sec * fs_est)
+    trimmed = [(s + trim_n, e - trim_n) for s, e in segments if (e - trim_n) > (s + trim_n)]
+    return trimmed, velocity_smooth
+
+#%% Diagnostic v2: CoP magnitude + velocity trace, both with detected segments overlaid
+
+diagnostic_file = phase7_files[0]
+raw_df, force_df = load_force_file(diagnostic_file['filepath'], diagnostic_file['phase'])
+moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
+filtered_df['Time'] = force_df['Time'].values
+
+cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_df, moment_units, diagnostic_file['phase'])
+time = filtered_df['Time'].values
+cop_mag = np.sqrt(cop_x_filt**2 + cop_y_filt**2)
+
+VELOCITY_THRESHOLD_IN_S_OR6 = 0.079   # phase 7 / OR6-7-8000
+
+segments, velocity_smooth = detect_static_segments(
+    time, cop_x_filt, cop_y_filt, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6
+)
+print(f"File: {diagnostic_file['basename']} ({diagnostic_file['path_type']})")
+print(f"Detected {len(segments)} static segment(s) at threshold {VELOCITY_THRESHOLD_IN_S_OR6} in/s")
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=time, y=cop_mag, mode='lines', name='CoP magnitude (in)', line=dict(color='steelblue')))
+for i, (s, e) in enumerate(segments):
+    fig.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.2, line_width=0)
+fig.update_layout(title=f"CoP magnitude — {diagnostic_file['basename']}",
+                   xaxis_title="Time (s)", yaxis_title="CoP magnitude (in)",
+                   template="plotly_white", width=1000, height=350)
+fig.show()
+
+fig2 = go.Figure()
+fig2.add_trace(go.Scatter(x=time, y=velocity_smooth, mode='lines', name='Smoothed speed (in/s)', line=dict(color='darkorange')))
+fig2.add_hline(y=VELOCITY_THRESHOLD_IN_S_OR6, line_dash='dash', line_color='red', annotation_text='threshold')
+for i, (s, e) in enumerate(segments):
+    fig2.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.15, line_width=0)
+fig2.update_layout(title="CoP speed (the actual signal being thresholded)",
+                    xaxis_title="Time (s)", yaxis_title="Speed (in/s)",
+                    template="plotly_white", width=1000, height=350)
+fig2.show()
+
+#%% Diagnostic: Fz vs. Time and Fz vs. CoP magnitude, one plot per phase 7 file
+
+from plotly.subplots import make_subplots
+
+def plot_fz_stability_diagnostic(file_info, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6):
+    raw_df, force_df = load_force_file(file_info['filepath'], file_info['phase'])
+    moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+    filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
+    filtered_df['Time'] = force_df['Time'].values
+
+    cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_df, moment_units, file_info['phase'])
+    time = filtered_df['Time'].values
+    fz_filt = filtered_df['Fz'].values
+    cop_mag = np.sqrt(cop_x_filt**2 + cop_y_filt**2)
+
+    segments, _ = detect_static_segments(time, cop_x_filt, cop_y_filt, velocity_threshold_in_s=velocity_threshold_in_s)
+
+    in_segment = np.zeros(len(time), dtype=bool)
+    for s, e in segments:
+        in_segment[s:e] = True
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=("Fz vs. Time", "Fz vs. CoP Magnitude"))
+
+    fig.add_trace(go.Scatter(x=time, y=fz_filt, mode='lines', name='Fz (filtered)',
+                              line=dict(color='steelblue')), row=1, col=1)
+    for s, e in segments:
+        seg_fz = fz_filt[s:e]
+        fig.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.15, line_width=0, row=1, col=1)
+        fig.add_annotation(x=(time[s] + time[e - 1]) / 2, y=fz_filt[s:e].max(),
+                            text=f"\u03c3={seg_fz.std(ddof=1):.3f}", showarrow=False,
+                            font=dict(size=9, color='darkgreen'), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=cop_mag[~in_segment], y=fz_filt[~in_segment], mode='markers',
+        marker=dict(size=3, color='lightgray'), name='Outside segment', opacity=0.5
+    ), row=1, col=2)
+    fig.add_trace(go.Scatter(
+        x=cop_mag[in_segment], y=fz_filt[in_segment], mode='markers',
+        marker=dict(size=4, color='green'), name='Inside segment', opacity=0.7
+    ), row=1, col=2)
+
+    fig.update_xaxes(title_text="Time (s)", row=1, col=1)
+    fig.update_yaxes(title_text="Fz (lbf)", row=1, col=1)
+    fig.update_xaxes(title_text="CoP magnitude (in)", row=1, col=2)
+    fig.update_yaxes(title_text="Fz (lbf)", row=1, col=2)
+
+    fig.update_layout(
+        title=f"Fz stability check — {file_info['basename']} ({file_info['path_type']}) — {len(segments)} segment(s)",
+        template="plotly_white", width=1200, height=500, showlegend=True
+    )
+    fig.show()
+
+    print(f"{file_info['basename']} ({file_info['path_type']}): {len(segments)} segment(s)")
+    for i, (s, e) in enumerate(segments):
+        seg_fz = fz_filt[s:e]
+        print(f"  Segment {i+1}: n={e-s}, Fz mean={seg_fz.mean():.3f} lbf, "
+              f"Fz std={seg_fz.std(ddof=1):.3f} lbf, Fz range={np.ptp(seg_fz):.3f} lbf")
+    print()
+
+
+for f in phase7_files:
+    plot_fz_stability_diagnostic(f, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6)
+    
+#%% Process all phase 7 files: extract per-segment mean CoP position + Fz
+
+spatial_rows = []
+for f in phase7_files:
+    raw_df, force_df = load_force_file(f['filepath'], f['phase'])
+    moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+    filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
+    filtered_df['Time'] = force_df['Time'].values
+
+    cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_df, moment_units, f['phase'])
+    time = filtered_df['Time'].values
+    fz_filt = filtered_df['Fz'].values
+
+    segments, _ = detect_static_segments(
+        time, cop_x_filt, cop_y_filt, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6
+    )
+    print(f"{f['basename']} ({f['path_type']}): {len(segments)} static segment(s)")
+
+    for seg_idx, (s, e) in enumerate(segments):
+        spatial_rows.append({
+            'File': f['basename'],
+            'Path Type': f['path_type'],
+            'Segment': seg_idx,
+            'CoPx [in]': np.mean(cop_x_filt[s:e]),
+            'CoPy [in]': np.mean(cop_y_filt[s:e]),
+            'Fz [lbf]': np.mean(fz_filt[s:e]),
+            'Fz Std [lbf]': np.std(fz_filt[s:e], ddof=1),
+        })
+
+spatial_uniformity_df = pd.DataFrame(spatial_rows)
+print(f"\nTotal static segments across all files: {len(spatial_uniformity_df)}")
+spatial_uniformity_df
+
+#%% Spatial Fz uniformity map: 2D scatter, colored by Fz reading (explicit colorbar formatting)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=spatial_uniformity_df['CoPx [in]'],
+    y=spatial_uniformity_df['CoPy [in]'],
+    mode='markers',
+    marker=dict(
+        size=12,
+        color=spatial_uniformity_df['Fz [lbf]'],
+        colorscale='Viridis',
+        showscale=True,          # explicitly force the colorbar on
+        colorbar=dict(
+            title=dict(text='Fz [lbf]', side='right'),
+            thickness=15,
+            len=0.75,
+            x=1.02                # nudge right so it doesn't overlap the plot area
+        ),
+        line=dict(width=1, color='black')
+    ),
+    text=spatial_uniformity_df['File'] + ' — seg ' + spatial_uniformity_df['Segment'].astype(str),
+    hovertemplate='CoPx: %{x:.1f}in<br>CoPy: %{y:.1f} in<br>Fz: %{marker.color:.2f} lbf<br>%{text}<extra></extra>'
+))
+fig.update_layout(
+    title="OR6-7-8000: Vertical Force (Fz) vs. Position on Plate Surface",
+    xaxis_title="CoP X (in)", yaxis_title="CoP Y (in)",
+    template="plotly_white", width=850, height=700,
+    yaxis=dict(scaleanchor="x", scaleratio=1),
+    margin=dict(r=100)   # extra right margin so the colorbar isn't clipped
+)
+fig.show()
+
+print(f"Fz range across all static positions: {spatial_uniformity_df['Fz [lbf]'].min():.2f} to "
+      f"{spatial_uniformity_df['Fz [lbf]'].max():.2f} lbf "
+      f"(spread: {spatial_uniformity_df['Fz [lbf]'].max() - spatial_uniformity_df['Fz [lbf]'].min():.2f} lbf)")
+
+#%% Phase 8: discover perimeter/diagonal traverse files (BP400600)
+
+phase8_files = get_files_by_phase(directories, phase=8, keyword=None)
+for f in phase8_files:
+    name_lower = f['basename'].lower()
+    f['path_type'] = 'perimeter' if 'perimeter' in name_lower else ('diagonal' if 'diagonal' in name_lower else 'unknown')
+
+print(f"Found {len(phase8_files)} phase 8 file(s)")
+for f in phase8_files:
+    print(f"  {f['basename']} -> {f['path_type']}")
+
+#%% determine velocity threshold for static segment detection (BP400600) — diagnostic plot
+
+diagnostic_file = phase8_files[0]
+raw_df, force_df = load_force_file(diagnostic_file['filepath'], diagnostic_file['phase'])
+moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
+filtered_df['Time'] = force_df['Time'].values
+
+cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_df, moment_units, diagnostic_file['phase'])
+time = filtered_df['Time'].values
+cop_mag = np.sqrt(cop_x_filt**2 + cop_y_filt**2)
+
+VELOCITY_THRESHOLD_IN_S_BP = 2.76    # phase 8 / BP400600
+
+segments, velocity_smooth = detect_static_segments(
+    time, cop_x_filt, cop_y_filt, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_BP
+)
+print(f"File: {diagnostic_file['basename']} ({diagnostic_file['path_type']})")
+print(f"Detected {len(segments)} static segment(s) at threshold {VELOCITY_THRESHOLD_IN_S_BP} in/s")
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=time, y=cop_mag, mode='lines', name='CoP magnitude (in)', line=dict(color='steelblue')))
+for i, (s, e) in enumerate(segments):
+    fig.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.2, line_width=0)
+fig.update_layout(title=f"CoP magnitude — {diagnostic_file['basename']}",
+                   xaxis_title="Time (s)", yaxis_title="CoP magnitude (in)",
+                   template="plotly_white", width=1000, height=350)
+fig.show()
+
+fig2 = go.Figure()
+fig2.add_trace(go.Scatter(x=time, y=velocity_smooth, mode='lines', name='Smoothed speed (in/s)', line=dict(color='darkorange')))
+fig2.add_hline(y=VELOCITY_THRESHOLD_IN_S_BP, line_dash='dash', line_color='red', annotation_text='threshold')
+for i, (s, e) in enumerate(segments):
+    fig2.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.15, line_width=0)
+fig2.update_layout(title="CoP speed (the actual signal being thresholded)",
+                    xaxis_title="Time (s)", yaxis_title="Speed (in/s)",
+                    template="plotly_white", width=1000, height=350)
+fig2.show()
+
+#%% Diagnostic: Fz stability check, one plot per phase 8 file (reuses plot_fz_stability_diagnostic from phase 7)
+
+for f in phase8_files:
+    plot_fz_stability_diagnostic(f, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_BP)
+
+#%% Process all phase 8 files: extract per-segment mean CoP position + Fz
+
+spatial_rows_bp = []
+for f in phase8_files:
+    raw_df, force_df = load_force_file(f['filepath'], f['phase'])
+    moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+    filtered_df = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=BUTTERWORTH_CUTOFF)
+    filtered_df['Time'] = force_df['Time'].values
+
+    cop_x_filt, cop_y_filt = compute_cop_timeseries(filtered_df, moment_units, f['phase'])
+    time = filtered_df['Time'].values
+    fz_filt = filtered_df['Fz'].values
+
+    segments, _ = detect_static_segments(
+        time, cop_x_filt, cop_y_filt, velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_BP
+    )
+    print(f"{f['basename']} ({f['path_type']}): {len(segments)} static segment(s)")
+
+    for seg_idx, (s, e) in enumerate(segments):
+        spatial_rows_bp.append({
+            'File': f['basename'],
+            'Path Type': f['path_type'],
+            'Segment': seg_idx,
+            'CoPx [in]': np.mean(cop_x_filt[s:e]),
+            'CoPy [in]': np.mean(cop_y_filt[s:e]),
+            'Fz [lbf]': np.mean(fz_filt[s:e]),
+            'Fz Std [lbf]': np.std(fz_filt[s:e], ddof=1),
+        })
+
+spatial_uniformity_df_bp = pd.DataFrame(spatial_rows_bp)
+print(f"\nTotal static segments across all phase 8 files: {len(spatial_uniformity_df_bp)}")
+spatial_uniformity_df_bp
+
+#%% Spatial Fz uniformity map — BP400600
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=spatial_uniformity_df_bp['CoPx [in]'],
+    y=spatial_uniformity_df_bp['CoPy [in]'],
+    mode='markers',
+    marker=dict(
+        size=12,
+        color=spatial_uniformity_df_bp['Fz [lbf]'],
+        colorscale='Viridis',
+        showscale=True,
+        colorbar=dict(title=dict(text='Fz [lbf]', side='right'), thickness=15, len=0.75, x=1.02),
+        line=dict(width=1, color='black')
+    ),
+    text=spatial_uniformity_df_bp['File'] + ' — seg ' + spatial_uniformity_df_bp['Segment'].astype(str),
+    hovertemplate='CoPx: %{x:.1f} in<br>CoPy: %{y:.1f} in<br>Fz: %{marker.color:.2f} lbf<br>%{text}<extra></extra>'
+))
+fig.update_layout(
+    title="BP400600: Vertical Force (Fz) vs. Position on Plate Surface",
+    xaxis_title="CoP X (in)", yaxis_title="CoP Y (in)",
+    template="plotly_white", width=850, height=700,
+    yaxis=dict(scaleanchor="x", scaleratio=1),
+    margin=dict(r=100)
+)
+fig.show()
+
+print(f"Fz range across all static positions: {spatial_uniformity_df_bp['Fz [lbf]'].min():.2f} to "
+      f"{spatial_uniformity_df_bp['Fz [lbf]'].max():.2f} lbf "
+      f"(spread: {spatial_uniformity_df_bp['Fz [lbf]'].max() - spatial_uniformity_df_bp['Fz [lbf]'].min():.2f} lbf)")
 
 #%%
 
