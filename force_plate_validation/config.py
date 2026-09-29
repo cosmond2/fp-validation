@@ -1,4 +1,7 @@
-"""Configuration constants, calibration matrices, and dimensions."""
+"""Configuration constants, calibration matrices, and z-offset lookup.
+
+Units convention: inches (in) and pounds-force (lbf) throughout.
+"""
 import numpy as np
 
 
@@ -6,28 +9,38 @@ M_TO_IN = 39.3701
 
 Z_OFFSET_IN_BY_PLATE = {
     'BP400600': -37.645e-3 * M_TO_IN,
-    'OR6-7-8000': 0.0,  # PLACEHOLDER — not yet confirmed from OR6-7-8000 manual, see get_z_offset_in()
+    'OR6-7-8000': None,  # UNCONFIRMED — not yet verified from the OR6-7-8000 manual.
+                          # get_z_offset_in() raises until this is set to a real value.
 }
-
 
 PHASE_TO_PLATE = {
     1: 'BP400600', 2: 'BP400600', 3: 'BP400600',
     4: 'OR6-7-8000',
-    5: 'OR6-7-8000',  
+    5: 'OR6-7-8000',
     6: 'BP400600',
     7: 'OR6-7-8000',
     8: 'BP400600'
 }
 
+
 def get_z_offset_in(phase):
+    """Look up the confirmed z-offset (in inches) for the plate used in a given phase.
+
+    Raises NotImplementedError if the offset for that plate has not yet been
+    confirmed from the manual (see Z_OFFSET_IN_BY_PLATE), rather than silently
+    falling back to a placeholder.
+    """
     plate = PHASE_TO_PLATE.get(phase)
     if plate is None:
         raise ValueError(f"Unknown phase {phase}; cannot map to a plate for z-offset lookup.")
     offset = Z_OFFSET_IN_BY_PLATE[plate]
-    if plate == 'OR6-7-8000':
-        print(f"WARNING: using placeholder z-offset (0.0 in) for {plate} — "
-              f"confirm true value from manual before trusting CoP results.")
+    if offset is None:
+        raise NotImplementedError(
+            f"z-offset for {plate} (phase {phase}) has not been confirmed from the manual yet. "
+            f"Set Z_OFFSET_IN_BY_PLATE['{plate}'] to a real value before computing CoP for this phase."
+        )
     return offset
+
 
 # Calibration matrices
 phase_1_2_3_gain_scaling = np.array([1, 1, 1, 1, 1, 1])
@@ -40,7 +53,7 @@ phase_1_2_3_matrix = np.array([
     [0.0327, 0.1287, -0.0279, 0.0057, 0.0677, 5.4770]
 ], dtype=float)
 
-phase_4_gain_scaling = np.array([0.25, 0.25, 1, 0.5, 0.5, 0.25])
+phase_4_gain_scaling = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 phase_4_matrix = np.array([
     [2.6952, 0.0567, -0.0513, -0.0221, 0.0360, -0.1051],
     [0.0145, 2.6894, -0.0668, -0.0094, -0.0372, 0.0441],
@@ -57,23 +70,8 @@ MATRIX_PHASE_6 = phase_1_2_3_matrix * phase_1_2_3_gain_scaling  # Phase 6 warm-u
 
 
 # Unit conversions
-LBF_TO_N = 4.44822
-IN_TO_MM = 25.4
 FT_TO_IN = 12.0
 
-# Plastic weight plate base diameter
-BASE_PLATE_DIA = 127  # mm
-
-# Force plate dimensions
-DIMS_BP400600 = {
-    'height': 600,
-    'width': 400
-}
-
-DIMS_OR67800 = {
-    'height': 508,
-    'width': 464
-}
 
 PHASE_LABELS = {
     1: "Phase 1: BP400600 / MSA6 SN6893 / PowerLab (baseline)",
@@ -83,9 +81,3 @@ PHASE_LABELS = {
     5: "Phase 5: OR6-7-8000 warm-up drift test",
     6: "Phase 6: BP400600 warm-up drift test",
 }
-
-APPLIED_LOAD_LBS = 50.0
-DRIFT_RECORDING_SECONDS = 300.0
-WARMUP_RECORDING_SECONDS = 3600.0
-DEFAULT_FS = 1000.0
-DEFAULT_CUTOFF_HZ = 20.0
