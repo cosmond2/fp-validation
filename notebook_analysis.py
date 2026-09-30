@@ -141,6 +141,39 @@ def detect_static_segments(time, cop_x, cop_y,
     trimmed = [(s + trim_n, e - trim_n) for s, e in segments if (e - trim_n) > (s + trim_n)]
     return trimmed, velocity_smooth
 
+
+def plot_cop_and_speed_diagnostics(result, velocity_threshold, tag):
+    """CoP magnitude + smoothed speed, with detected static segments highlighted.
+
+    Defined here (rather than in an OPTIONAL PLOT cell) so it can be reused both
+    for tuning VELOCITY_THRESHOLD_IN_S_* against the real signal and for the
+    later post-hoc diagnostic pass.
+    """
+    time = result['time']
+    segments = result['segments']
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=time, y=result['cop_mag'], mode='lines',
+                             name='CoP magnitude (in)', line=dict(color='steelblue')))
+    for s, e in segments:
+        fig.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.2, line_width=0)
+    fig.update_layout(title=f"CoP magnitude — {result['file_info']['basename']}",
+                      xaxis_title="Time (s)", yaxis_title="CoP magnitude (in)",
+                      template="plotly_white", width=1000, height=350)
+    show_plot(fig, f"{tag}_cop_magnitude_{Path(result['file_info']['basename']).stem}")
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=time, y=result['velocity_smooth'], mode='lines',
+                              name='Smoothed speed (in/s)', line=dict(color='darkorange')))
+    fig2.add_hline(y=velocity_threshold, line_dash='dash', line_color='red',
+                   annotation_text='threshold')
+    for s, e in segments:
+        fig2.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.15, line_width=0)
+    fig2.update_layout(title="CoP speed (the actual signal being thresholded)",
+                       xaxis_title="Time (s)", yaxis_title="Speed (in/s)",
+                       template="plotly_white", width=1000, height=350)
+    show_plot(fig2, f"{tag}_cop_speed_{Path(result['file_info']['basename']).stem}")
+
 #%% Helper: corner-loading identification
 
 CORNER_LABELS = {'_tl': 'TL', '_tr': 'TR', '_br': 'BR', '_bl': 'BL'}
@@ -432,9 +465,7 @@ for plate, data in warmup_data.items():
 warmup_summary_table = pd.DataFrame(warmup_rows).round(2)
 warmup_summary_table
 
-#%% Phase 7: discover files + set threshold (COMPUTE ONLY)
-VELOCITY_THRESHOLD_IN_S_OR6 = 2.0
-
+#%% Phase 7: discover files (COMPUTE ONLY) — threshold is set later, in the tuning cell
 phase7_files = get_files_by_phase(directories, phase=7, keyword=None)
 for f in phase7_files:
     name_lower = f['basename'].lower()
@@ -444,10 +475,11 @@ print(f"Found {len(phase7_files)} phase 7 file(s)")
 for f in phase7_files:
     print(f"  {f['basename']} -> {f['path_type']}")
 
-#%% Phase 7: analyze every file (segments + per-segment stats) — no plotting
+#%% Phase 7: compute per-file signals (I/O + filtering + CoP) — independent of any
+# stationary-segment threshold, so this only needs to run once per data load.
 
-def analyze_file_for_segments(file_info, threshold):
-    """Load, filter, compute CoP, detect segments. Returns a dict for later plotting/table use."""
+def compute_file_signal(file_info):
+    """Load, filter, and compute CoP/Fz time series. Does NOT depend on a velocity threshold."""
     raw_df, force_df = load_force_file(file_info['filepath'], file_info['phase'])
     moment_units = force_df.attrs.get('moment_units', 'lbf-in')
 
@@ -459,20 +491,39 @@ def analyze_file_for_segments(file_info, threshold):
     fz = filtered_df['Fz'].values
     cop_mag = np.sqrt(cop_x ** 2 + cop_y ** 2)
 
-    segments, velocity_smooth = detect_static_segments(
-        time, cop_x, cop_y, velocity_threshold_in_s=threshold
-    )
-
     return {
         'file_info': file_info, 'time': time,
-        'cop_x': cop_x, 'cop_y': cop_y, 'cop_mag': cop_mag,
-        'fz': fz, 'segments': segments, 'velocity_smooth': velocity_smooth,
+        'cop_x': cop_x, 'cop_y': cop_y, 'cop_mag': cop_mag, 'fz': fz,
     }
 
 
+phase7_signals = {f['basename']: compute_file_signal(f) for f in phase7_files}
+
+#%% Phase 7: TUNE the threshold — cheap (no I/O/filtering), rerun freely against the
+# real CoP-speed signal before committing to a value for the batch below.
+VELOCITY_THRESHOLD_IN_S_OR6 = 2.0  # <- adjust and re-run this cell until segments look right
+
+if SHOW_PLOTS:
+    _p7_tune_key = phase7_files[0]['basename']
+    _sig = phase7_signals[_p7_tune_key]
+    _segments, _velocity_smooth = detect_static_segments(
+        _sig['time'], _sig['cop_x'], _sig['cop_y'],
+        velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6
+    )
+    plot_cop_and_speed_diagnostics(
+        {**_sig, 'segments': _segments, 'velocity_smooth': _velocity_smooth},
+        VELOCITY_THRESHOLD_IN_S_OR6, "phase7_tuning"
+    )
+
+#%% Phase 7: apply the tuned threshold across every file — no plotting
 phase7_analysis = {}
 for f in phase7_files:
-    result = analyze_file_for_segments(f, VELOCITY_THRESHOLD_IN_S_OR6)
+    sig = phase7_signals[f['basename']]
+    segments, velocity_smooth = detect_static_segments(
+        sig['time'], sig['cop_x'], sig['cop_y'],
+        velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_OR6
+    )
+    result = {**sig, 'segments': segments, 'velocity_smooth': velocity_smooth}
     phase7_analysis[f['basename']] = result
 
     print(f"{f['basename']} ({f['path_type']}): {len(result['segments'])} segment(s)")
@@ -513,9 +564,7 @@ else:
         f"(spread: {fz_max - fz_min:.2f} lbf)")
 spatial_uniformity_df
 
-#%% Phase 8: discover files + set threshold (COMPUTE ONLY)
-VELOCITY_THRESHOLD_IN_S_BP = 2.76
-
+#%% Phase 8: discover files (COMPUTE ONLY) — threshold is set later, in the tuning cell
 phase8_files = get_files_by_phase(directories, phase=8, keyword=None)
 for f in phase8_files:
     name_lower = f['basename'].lower()
@@ -525,10 +574,34 @@ print(f"Found {len(phase8_files)} phase 8 file(s)")
 for f in phase8_files:
     print(f"  {f['basename']} -> {f['path_type']}")
 
-#%% Phase 8: analyze every file — no plotting
+#%% Phase 8: compute per-file signals (I/O + filtering + CoP) — independent of any
+# stationary-segment threshold.
+phase8_signals = {f['basename']: compute_file_signal(f) for f in phase8_files}
+
+#%% Phase 8: TUNE the threshold — cheap, rerun freely against the real signal.
+VELOCITY_THRESHOLD_IN_S_BP = 2.76  # <- adjust and re-run this cell until segments look right
+
+if SHOW_PLOTS:
+    _p8_tune_key = phase8_files[0]['basename']
+    _sig = phase8_signals[_p8_tune_key]
+    _segments, _velocity_smooth = detect_static_segments(
+        _sig['time'], _sig['cop_x'], _sig['cop_y'],
+        velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_BP
+    )
+    plot_cop_and_speed_diagnostics(
+        {**_sig, 'segments': _segments, 'velocity_smooth': _velocity_smooth},
+        VELOCITY_THRESHOLD_IN_S_BP, "phase8_tuning"
+    )
+
+#%% Phase 8: apply the tuned threshold across every file — no plotting
 phase8_analysis = {}
 for f in phase8_files:
-    result = analyze_file_for_segments(f, VELOCITY_THRESHOLD_IN_S_BP)
+    sig = phase8_signals[f['basename']]
+    segments, velocity_smooth = detect_static_segments(
+        sig['time'], sig['cop_x'], sig['cop_y'],
+        velocity_threshold_in_s=VELOCITY_THRESHOLD_IN_S_BP
+    )
+    result = {**sig, 'segments': segments, 'velocity_smooth': velocity_smooth}
     phase8_analysis[f['basename']] = result
 
     print(f"{f['basename']} ({f['path_type']}): {len(result['segments'])} segment(s)")
@@ -611,34 +684,10 @@ if SHOW_PLOTS:
     )
     show_plot(fig, "5.4_warmup_fz_vs_time")
 
-#%% [OPTIONAL PLOT] Phase 7 — CoP magnitude + speed diagnostics (first file)
-
-def plot_cop_and_speed_diagnostics(result, velocity_threshold, tag):
-    time = result['time']
-    segments = result['segments']
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=time, y=result['cop_mag'], mode='lines',
-                             name='CoP magnitude (in)', line=dict(color='steelblue')))
-    for s, e in segments:
-        fig.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.2, line_width=0)
-    fig.update_layout(title=f"CoP magnitude — {result['file_info']['basename']}",
-                      xaxis_title="Time (s)", yaxis_title="CoP magnitude (in)",
-                      template="plotly_white", width=1000, height=350)
-    show_plot(fig, f"{tag}_cop_magnitude_{Path(result['file_info']['basename']).stem}")
-
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=time, y=result['velocity_smooth'], mode='lines',
-                              name='Smoothed speed (in/s)', line=dict(color='darkorange')))
-    fig2.add_hline(y=velocity_threshold, line_dash='dash', line_color='red',
-                   annotation_text='threshold')
-    for s, e in segments:
-        fig2.add_vrect(x0=time[s], x1=time[e - 1], fillcolor='green', opacity=0.15, line_width=0)
-    fig2.update_layout(title="CoP speed (the actual signal being thresholded)",
-                       xaxis_title="Time (s)", yaxis_title="Speed (in/s)",
-                       template="plotly_white", width=1000, height=350)
-    show_plot(fig2, f"{tag}_cop_speed_{Path(result['file_info']['basename']).stem}")
-
+#%% [OPTIONAL PLOT] Phase 7 — CoP magnitude + speed diagnostics, final confirmation (first file)
+# NOTE: the threshold was already tuned against this plot above, before phase7_analysis
+# was built. This is just a final confirmation using the committed threshold/segments —
+# see the "TUNE the threshold" cell if the segments here look wrong.
 
 if SHOW_PLOTS:
     _p7_diag_key = phase7_files[0]['basename']
@@ -692,39 +741,58 @@ if SHOW_PLOTS:
 
 #%% [OPTIONAL PLOT] Phase 7 — spatial Fz uniformity map
 
-if SHOW_PLOTS and not spatial_uniformity_df.empty:
+def plot_spatial_fz_map(spatial_df, phase, plate_label, tag):
+    """Fz vs. CoP position, with the true plate footprint overlaid as a rectangle.
+
+    Shared by phase 7 (OR6-7-8000) and phase 8 (BP400600) — origin (0, 0) is
+    plate center for both plates (see get_plate_dims_in).
+    """
+    dims = get_plate_dims_in(phase)
+
     fig = go.Figure()
     hover_text = [
         f"{filename} - seg {segment}"
         for filename, segment in zip(
-            spatial_uniformity_df['File'].tolist(),
-            spatial_uniformity_df['Segment'].tolist(),
+            spatial_df['File'].tolist(),
+            spatial_df['Segment'].tolist(),
         )
     ]
     fig.add_trace(go.Scatter(
-        x=spatial_uniformity_df['CoPx [in]'],
-        y=spatial_uniformity_df['CoPy [in]'],
+        x=spatial_df['CoPx [in]'],
+        y=spatial_df['CoPy [in]'],
         mode='markers',
         marker=dict(
             size=12,
-            color=spatial_uniformity_df['Fz [lbf]'],
+            color=spatial_df['Fz [lbf]'],
             colorscale='Viridis', showscale=True,
             colorbar=dict(title=dict(text='Fz [lbf]', side='right'),
                           thickness=15, len=0.75, x=1.02),
             line=dict(width=1, color='black'),
         ),
         text=hover_text,
-        hovertemplate='CoPx: %{x:.1f}in<br>CoPy: %{y:.1f} in<br>Fz: %{marker.color:.2f} lbf<br>%{text}<extra></extra>',
+        hovertemplate='CoPx: %{x:.1f} in<br>CoPy: %{y:.1f} in<br>Fz: %{marker.color:.2f} lbf<br>%{text}<extra></extra>',
     ))
+    fig.add_shape(
+        type="rect",
+        x0=-dims['width'] / 2, x1=dims['width'] / 2,
+        y0=-dims['height'] / 2, y1=dims['height'] / 2,
+        line=dict(color="black", width=2, dash="dash"),
+    )
     fig.update_layout(
-        title="OR6-7-8000: Vertical Force (Fz) vs. Position on Plate Surface",
+        title=f"{plate_label}: Vertical Force (Fz) vs. Position on Plate Surface",
         xaxis_title="CoP X (in)", yaxis_title="CoP Y (in)",
         template="plotly_white", width=850, height=700,
         yaxis=dict(scaleanchor="x", scaleratio=1), margin=dict(r=100),
     )
-    show_plot(fig, "phase7_spatial_fz_map")
+    show_plot(fig, f"{tag}_spatial_fz_map")
 
-#%% [OPTIONAL PLOT] Phase 8 — CoP magnitude + speed diagnostics (first file)
+
+if SHOW_PLOTS and not spatial_uniformity_df.empty:
+    plot_spatial_fz_map(spatial_uniformity_df, 7, "OR6-7-8000", "phase7")
+
+#%% [OPTIONAL PLOT] Phase 8 — CoP magnitude + speed diagnostics, final confirmation (first file)
+# NOTE: same as Phase 7 above — the threshold was already tuned before phase8_analysis
+# was built. This is a final confirmation pass, not the tuning step.
 if SHOW_PLOTS:
     _p8_diag_key = phase8_files[0]['basename']
     plot_cop_and_speed_diagnostics(phase8_analysis[_p8_diag_key],
@@ -737,36 +805,7 @@ if SHOW_PLOTS:
 
 #%% [OPTIONAL PLOT] Phase 8 — spatial Fz uniformity map
 if SHOW_PLOTS and not spatial_uniformity_df_bp.empty:
-    fig = go.Figure()
-    hover_text = [
-        f"{filename} - seg {segment}"
-        for filename, segment in zip(
-            spatial_uniformity_df_bp['File'].tolist(),
-            spatial_uniformity_df_bp['Segment'].tolist(),
-        )
-    ]
-    fig.add_trace(go.Scatter(
-        x=spatial_uniformity_df_bp['CoPx [in]'],
-        y=spatial_uniformity_df_bp['CoPy [in]'],
-        mode='markers',
-        marker=dict(
-            size=12,
-            color=spatial_uniformity_df_bp['Fz [lbf]'],
-            colorscale='Viridis', showscale=True,
-            colorbar=dict(title=dict(text='Fz [lbf]', side='right'),
-                          thickness=15, len=0.75, x=1.02),
-            line=dict(width=1, color='black'),
-        ),
-        text=hover_text,
-        hovertemplate='CoPx: %{x:.1f} in<br>CoPy: %{y:.1f} in<br>Fz: %{marker.color:.2f} lbf<br>%{text}<extra></extra>',
-    ))
-    fig.update_layout(
-        title="BP400600: Vertical Force (Fz) vs. Position on Plate Surface",
-        xaxis_title="CoP X (in)", yaxis_title="CoP Y (in)",
-        template="plotly_white", width=850, height=700,
-        yaxis=dict(scaleanchor="x", scaleratio=1), margin=dict(r=100),
-    )
-    show_plot(fig, "phase8_spatial_fz_map")
+    plot_spatial_fz_map(spatial_uniformity_df_bp, 8, "BP400600", "phase8")
 
     
 

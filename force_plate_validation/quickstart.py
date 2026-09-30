@@ -9,7 +9,8 @@ Usage:
 # Configuration and constants
 from .config import (
     MATRIX_PHASE_1_2_3, MATRIX_PHASE_4, MATRIX_PHASE_5, MATRIX_PHASE_6,
-    FT_TO_IN, M_TO_IN, Z_OFFSET_IN_BY_PLATE, PHASE_TO_PLATE, get_z_offset_in
+    FT_TO_IN, M_TO_IN, MM_TO_IN, Z_OFFSET_IN_BY_PLATE, PHASE_TO_PLATE,
+    PLATE_DIMS_IN_BY_PLATE, get_z_offset_in, get_plate_dims_in
 )
 
 # File I/O
@@ -66,7 +67,9 @@ def _print_welcome():
     print(f"  • FT_TO_IN = {FT_TO_IN}")
     print(f"  • M_TO_IN = {M_TO_IN}")
     print(f"  • Z_OFFSET_IN_BY_PLATE = {Z_OFFSET_IN_BY_PLATE}")
-    print("  • get_z_offset_in(phase) -> raises NotImplementedError if unconfirmed")
+    print("  • get_z_offset_in(phase) -> warns and returns 0.0 if plate z-offset is unconfirmed")
+    print(f"  • PLATE_DIMS_IN_BY_PLATE = {PLATE_DIMS_IN_BY_PLATE}")
+    print("  • get_plate_dims_in(phase) -> {'width': in, 'height': in}, origin (0,0) = plate center")
 
     print("\n💡 QUICK START EXAMPLE:")
     print("  raw_df, force_df = load_force_file('path/to/file.txt', phase=1)")

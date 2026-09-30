@@ -6,11 +6,19 @@ import numpy as np
 
 
 M_TO_IN = 39.3701
+MM_TO_IN = 1 / 25.4
 
 Z_OFFSET_IN_BY_PLATE = {
     'BP400600': -37.645e-3 * M_TO_IN,
     'OR6-7-8000': None,  # UNCONFIRMED — not yet verified from the OR6-7-8000 manual.
-                          # get_z_offset_in() raises until this is set to a real value.
+                          # get_z_offset_in() warns and falls back to 0.0 in until this is set.
+}
+
+# Plate footprint, manufacturer spec in mm, converted once here. Origin (0, 0) is
+# plate center for both plates.
+PLATE_DIMS_IN_BY_PLATE = {
+    'BP400600':   {'width': 400 * MM_TO_IN, 'height': 600 * MM_TO_IN},
+    'OR6-7-8000': {'width': 464 * MM_TO_IN, 'height': 508 * MM_TO_IN},
 }
 
 PHASE_TO_PLATE = {
@@ -24,22 +32,33 @@ PHASE_TO_PLATE = {
 
 
 def get_z_offset_in(phase):
-    """Look up the confirmed z-offset (in inches) for the plate used in a given phase.
+    """Look up the z-offset (in inches) for the plate used in a given phase.
 
-    Raises NotImplementedError if the offset for that plate has not yet been
-    confirmed from the manual (see Z_OFFSET_IN_BY_PLATE), rather than silently
-    falling back to a placeholder.
+    If the offset for that plate has not yet been confirmed from the manual
+    (see Z_OFFSET_IN_BY_PLATE), prints a warning and falls back to a 0.0 in
+    placeholder so downstream CoP computation still runs — the warning flags
+    that an assumption is being made rather than blocking the calculation.
     """
     plate = PHASE_TO_PLATE.get(phase)
     if plate is None:
         raise ValueError(f"Unknown phase {phase}; cannot map to a plate for z-offset lookup.")
     offset = Z_OFFSET_IN_BY_PLATE[plate]
     if offset is None:
-        raise NotImplementedError(
-            f"z-offset for {plate} (phase {phase}) has not been confirmed from the manual yet. "
-            f"Set Z_OFFSET_IN_BY_PLATE['{plate}'] to a real value before computing CoP for this phase."
+        print(
+            f"WARNING: z-offset for {plate} (phase {phase}) has not been confirmed from the "
+            f"manual yet — using a placeholder of 0.0 in. Confirm and set "
+            f"Z_OFFSET_IN_BY_PLATE['{plate}'] before trusting CoP results for this phase."
         )
+        return 0.0
     return offset
+
+
+def get_plate_dims_in(phase):
+    """Look up the plate width/height (in inches) for the plate used in a given phase."""
+    plate = PHASE_TO_PLATE.get(phase)
+    if plate is None:
+        raise ValueError(f"Unknown phase {phase}; cannot map to a plate for dimension lookup.")
+    return PLATE_DIMS_IN_BY_PLATE[plate]
 
 
 # Calibration matrices
@@ -71,13 +90,3 @@ MATRIX_PHASE_6 = phase_1_2_3_matrix * phase_1_2_3_gain_scaling  # Phase 6 warm-u
 
 # Unit conversions
 FT_TO_IN = 12.0
-
-
-PHASE_LABELS = {
-    1: "Phase 1: BP400600 / MSA6 SN6893 / PowerLab (baseline)",
-    2: "Phase 2: BP400600 / MSA6 SN7526 / PowerLab (amplifier isolation)",
-    3: "Phase 3: BP400600 / MSA6 SN7526 / NI-6210 (DAQ isolation)",
-    4: "Phase 4: OR6-7-8000 / MSA6 SN7526 / PowerLab (force plate isolation)",
-    5: "Phase 5: OR6-7-8000 warm-up drift test",
-    6: "Phase 6: BP400600 warm-up drift test",
-}
