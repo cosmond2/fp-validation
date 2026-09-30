@@ -19,6 +19,10 @@ def get_reader_and_matrix(phase):
         return read_powerlab_daq, MATRIX_PHASE_4, 'lbf-ft'   # OR6-7-8000 perimeter/diagonal traverse
     elif phase == 8:
         return read_powerlab_daq, MATRIX_PHASE_1_2_3, 'lbf-in'   # BP400600 perimeter/diagonal traverse
+    elif phase == 9:
+        return read_powerlab_daq, MATRIX_PHASE_4, 'lbf-ft'       # OR6-7-8000 gait
+    elif phase == 10:
+        return read_powerlab_daq, MATRIX_PHASE_1_2_3, 'lbf-in'   # BP400600 gait
     else:
         return read_powerlab_daq, MATRIX_PHASE_1_2_3, 'lbf-in'
 

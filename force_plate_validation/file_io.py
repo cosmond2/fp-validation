@@ -9,6 +9,10 @@ import io
 def determine_phase(filename):
     """Determine validation phase from filename."""
     filename = filename.lower()
+    if "phase10" in filename:   # must precede "phase1" (substring match)
+        return 10
+    if "phase9" in filename:
+        return 9
     if "phase8" in filename:
         return 8
     if "phase7" in filename:
@@ -26,7 +30,7 @@ def determine_phase(filename):
     elif "phase1" in filename:
         return 1
     raise NameError(
-        f"File:{filename} does not contain valid phase1-7 for identification."
+        f"File:{filename} does not contain valid phase1-10 for identification."
     )
 
 

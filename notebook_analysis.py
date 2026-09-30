@@ -807,6 +807,229 @@ if SHOW_PLOTS:
 if SHOW_PLOTS and not spatial_uniformity_df_bp.empty:
     plot_spatial_fz_map(spatial_uniformity_df_bp, 8, "BP400600", "phase8")
 
-    
+
+#%% Gait (phases 9-10): configuration
+BODYWEIGHT_LBF = None            # <- REQUIRED: participant bodyweight in lbf
+GAIT_CUTOFF_HZ = 20              # low-pass cutoff for gait GRF
+GAIT_FZ_THRESHOLD_LBF = 10.0     # Fz above this = foot on plate (tune against Fz trace)
+GAIT_MIN_STANCE_SEC = 0.3        # reject spurious contacts shorter than this
+GAIT_MAX_STANCE_SEC = 1.5        # reject contacts longer than this
+GAIT_N_POINTS = 101              # 0-100% of stance
+GAIT_COP_ORIGIN_SAMPLES = 10     # samples averaged at heel strike to define CoP origin
+
+# Toggle: True -> shift each cycle's CoP so heel strike = (0, 0)
+ALIGN_COP_TO_HEEL_STRIKE = False
+
+# Flip to -1 if a plate reports a axis with the opposite sign from your convention
+# (e.g. Fz negative under load). Applied to GRF outputs/detection only; CoP is
+# always computed from the unsigned calibrated data.
+GRF_SIGN = {'Fx': 1, 'Fy': 1, 'Fz': 1}
+
+#%% Gait helpers: stance detection, time normalization, cycle extraction
+
+def detect_stance_phases(time, fz, threshold, min_duration_sec, max_duration_sec):
+    """Heel strike -> toe off, as Fz threshold crossings.
+
+    Returns list of (start, end) index pairs; `end` is exclusive (first unloaded
+    sample). Contacts already in progress at the start of the file or still in
+    progress at the end are dropped (partial cycles).
+    """
+    loaded = (fz > threshold).astype(int)
+    edges = np.diff(loaded)
+    starts = np.where(edges == 1)[0] + 1
+    ends = np.where(edges == -1)[0] + 1
+
+    if len(starts) == 0 or len(ends) == 0:
+        return []
+    ends = ends[ends > starts[0]]              # drop an end with no matching start
+    starts = starts[:len(ends)]                # drop a trailing start with no end
+
+    stance = []
+    for s, e in zip(starts, ends):
+        dur = time[e - 1] - time[s]
+        if min_duration_sec <= dur <= max_duration_sec:
+            stance.append((s, e))
+    return stance
+
+
+def time_normalize(y, n_points=GAIT_N_POINTS):
+    """Resample a 1-D signal onto 0-100% in n_points samples."""
+    x_old = np.linspace(0, 100, len(y))
+    x_new = np.linspace(0, 100, n_points)
+    return np.interp(x_new, x_old, y)
+
+
+def extract_gait_cycles(file_info, bodyweight_lbf):
+    """Load one gait file and return a list of per-cycle dicts (stance phase only)."""
+    if bodyweight_lbf is None:
+        raise ValueError("Set BODYWEIGHT_LBF in the gait configuration cell first.")
+
+    phase = file_info['phase']
+    _, force_df = load_force_file(file_info['filepath'], phase)
+    moment_units = force_df.attrs.get('moment_units', 'lbf-in')
+
+    filt = butterworth_filter(force_df[force_channel_cols], fs=FS, cutoff_hz=GAIT_CUTOFF_HZ)
+    filt['Time'] = force_df['Time'].values
+    time = filt['Time'].values
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cop_x, cop_y = compute_cop_timeseries(filt, moment_units, phase)
+
+    fz_detect = filt['Fz'].values * GRF_SIGN['Fz']
+    stance = detect_stance_phases(time, fz_detect, GAIT_FZ_THRESHOLD_LBF,
+                                  GAIT_MIN_STANCE_SEC, GAIT_MAX_STANCE_SEC)
+
+    cycles = []
+    for i, (s, e) in enumerate(stance, start=1):
+        seg = slice(s, e)
+        n0 = GAIT_COP_ORIGIN_SAMPLES
+        cycles.append({
+            'file_info': file_info,
+            'phase': phase,
+            'cycle': i,
+            'start_time': time[s],
+            'end_time': time[e - 1],
+            'stance_sec': time[e - 1] - time[s],
+            'pct': np.linspace(0, 100, GAIT_N_POINTS),
+            # GRF, % bodyweight. Fx = medial/lateral, Fy = anterior/posterior, Fz = vertical
+            'fx': time_normalize(filt['Fx'].values[seg] * GRF_SIGN['Fx']) / bodyweight_lbf * 100,
+            'fy': time_normalize(filt['Fy'].values[seg] * GRF_SIGN['Fy']) / bodyweight_lbf * 100,
+            'fz': time_normalize(filt['Fz'].values[seg] * GRF_SIGN['Fz']) / bodyweight_lbf * 100,
+            # CoP in plate frame (in), origin = plate center
+            'cop_x': time_normalize(cop_x[seg]),
+            'cop_y': time_normalize(cop_y[seg]),
+            'cop_origin': (np.nanmean(cop_x[s:s + n0]), np.nanmean(cop_y[s:s + n0])),
+        })
+    return cycles
+
+
+def gait_summary_table(cycles):
+    return pd.DataFrame([{
+        'Cycle': c['cycle'],
+        'Start [s]': c['start_time'],
+        'Stance [s]': c['stance_sec'],
+        'Peak Fz [%BW]': c['fz'].max(),
+        'Heel-strike CoPx [in]': c['cop_origin'][0],
+        'Heel-strike CoPy [in]': c['cop_origin'][1],
+    } for c in cycles]).round(2)
+
+#%% Phase 9 (OR6-7-8000 gait): extract cycles — COMPUTE ONLY
+phase9_files = get_files_by_phase(directories, phase=9)
+if len(phase9_files) != 1:
+    print(f"WARNING: expected 1 phase 9 file, found {len(phase9_files)}; using the first.")
+print(f"Phase 9 file: {phase9_files[0]['basename']}")
+
+phase9_cycles = extract_gait_cycles(phase9_files[0], BODYWEIGHT_LBF)
+print(f"Extracted {len(phase9_cycles)} gait cycle(s)")
+phase9_summary = gait_summary_table(phase9_cycles)
+phase9_summary
+
+#%% Phase 10 (BP400600 gait): extract cycles — COMPUTE ONLY
+phase10_files = get_files_by_phase(directories, phase=10)
+if len(phase10_files) != 1:
+    print(f"WARNING: expected 1 phase 10 file, found {len(phase10_files)}; using the first.")
+print(f"Phase 10 file: {phase10_files[0]['basename']}")
+
+phase10_cycles = extract_gait_cycles(phase10_files[0], BODYWEIGHT_LBF)
+print(f"Extracted {len(phase10_cycles)} gait cycle(s)")
+phase10_summary = gait_summary_table(phase10_cycles)
+phase10_summary
+
+#%% [OPTIONAL PLOT] Gait — plotting helpers (per-cycle figure + CoP overlay)
+
+def _plate_outline(dims, origin=(0.0, 0.0)):
+    hw, hh = dims['width'] / 2, dims['height'] / 2
+    xs = np.array([-hw, hw, hw, -hw, -hw]) - origin[0]
+    ys = np.array([-hh, -hh, hh, hh, -hh]) - origin[1]
+    return xs, ys
+
+
+def _cop_frame(cycle, align):
+    """CoP coordinates and the plate-outline origin shift for one cycle."""
+    ox, oy = cycle['cop_origin'] if align else (0.0, 0.0)
+    return cycle['cop_x'] - ox, cycle['cop_y'] - oy, (ox, oy)
+
+
+def plot_gait_cycle(cycle, plate_label, align, tag):
+    dims = get_plate_dims_in(cycle['phase'])
+    cx, cy, origin = _cop_frame(cycle, align)
+    ox_line, oy_line = _plate_outline(dims, origin)
+
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.5, 0.5],
+                        subplot_titles=("GRF (% bodyweight) vs. % stance",
+                                        "CoP trajectory" + (" (heel strike = origin)" if align else "")))
+    for key, name in [('fx', 'Fx (M/L)'), ('fy', 'Fy (A/P)'), ('fz', 'Fz (vertical)')]:
+        fig.add_trace(go.Scatter(x=cycle['pct'], y=cycle[key], mode='lines', name=name),
+                      row=1, col=1)
+
+    fig.add_trace(go.Scatter(x=ox_line, y=oy_line, mode='lines', showlegend=False,
+                             line=dict(color='black', width=2, dash='dash'),
+                             hoverinfo='skip'), row=1, col=2)
+    fig.add_trace(go.Scatter(x=cx, y=cy, mode='lines', name='CoP path',
+                             line=dict(color='steelblue', width=2)), row=1, col=2)
+    fig.add_trace(go.Scatter(x=[cx[0]], y=[cy[0]], mode='markers', name='Heel strike',
+                             marker=dict(size=10, color='green')), row=1, col=2)
+    fig.add_trace(go.Scatter(x=[cx[-1]], y=[cy[-1]], mode='markers', name='Toe off',
+                             marker=dict(size=10, color='red')), row=1, col=2)
+
+    fig.update_xaxes(title_text="% stance (heel strike to toe off)", row=1, col=1)
+    fig.update_yaxes(title_text="GRF (% BW)", row=1, col=1)
+    fig.update_xaxes(title_text="CoP X, M/L (in)", row=1, col=2)
+    fig.update_yaxes(title_text="CoP Y, A/P (in)", scaleanchor="x2", scaleratio=1, row=1, col=2)
+    fig.update_layout(
+        title=f"{plate_label} — {cycle['file_info']['basename']} — cycle {cycle['cycle']} "
+              f"(stance {cycle['stance_sec']:.2f} s)",
+        template="plotly_white", width=1300, height=550,
+    )
+    show_plot(fig, f"{tag}_cycle{cycle['cycle']:02d}")
+
+
+def plot_cop_overlay(cycles, plate_label, align, tag):
+    dims = get_plate_dims_in(cycles[0]['phase'])
+    fig = go.Figure()
+
+    if align:
+        # Each cycle has its own shift, so each cycle gets its own (faint) outline
+        for c in cycles:
+            _, _, origin = _cop_frame(c, True)
+            ox_line, oy_line = _plate_outline(dims, origin)
+            fig.add_trace(go.Scatter(x=ox_line, y=oy_line, mode='lines', showlegend=False,
+                                     line=dict(color='lightgray', width=1, dash='dash'),
+                                     hoverinfo='skip'))
+    else:
+        ox_line, oy_line = _plate_outline(dims)
+        fig.add_trace(go.Scatter(x=ox_line, y=oy_line, mode='lines', showlegend=False,
+                                 line=dict(color='black', width=2, dash='dash'),
+                                 hoverinfo='skip'))
+
+    for c in cycles:
+        cx, cy, _ = _cop_frame(c, align)
+        fig.add_trace(go.Scatter(x=cx, y=cy, mode='lines', name=f"Cycle {c['cycle']}"))
+        fig.add_trace(go.Scatter(x=[cx[0]], y=[cy[0]], mode='markers', showlegend=False,
+                                 marker=dict(size=7, color='green'), hoverinfo='skip'))
+        fig.add_trace(go.Scatter(x=[cx[-1]], y=[cy[-1]], mode='markers', showlegend=False,
+                                 marker=dict(size=7, color='red'), hoverinfo='skip'))
+
+    fig.update_layout(
+        title=f"{plate_label}: CoP trajectories, all cycles"
+              + (" (heel strike = origin)" if align else " (plate frame)")
+              + " — green = heel strike, red = toe off",
+        xaxis_title="CoP X, M/L (in)", yaxis_title="CoP Y, A/P (in)",
+        yaxis=dict(scaleanchor="x", scaleratio=1),
+        template="plotly_white", width=850, height=700,
+    )
+    show_plot(fig, f"{tag}_cop_overlay")
+
+#%% [OPTIONAL PLOT] Phase 9 — per-cycle GRF + CoP, and CoP overlay
+if SHOW_PLOTS:
+    for c in phase9_cycles:
+        plot_gait_cycle(c, "OR6-7-8000", ALIGN_COP_TO_HEEL_STRIKE, "phase9")
+    plot_cop_overlay(phase9_cycles, "OR6-7-8000", ALIGN_COP_TO_HEEL_STRIKE, "phase9")
+
+#%% [OPTIONAL PLOT] Phase 10 — per-cycle GRF + CoP, and CoP overlay
+if SHOW_PLOTS:
+    for c in phase10_cycles:
+        plot_gait_cycle(c, "BP400600", ALIGN_COP_TO_HEEL_STRIKE, "phase10")
+    plot_cop_overlay(phase10_cycles, "BP400600", ALIGN_COP_TO_HEEL_STRIKE, "phase10")
 
 # %%
